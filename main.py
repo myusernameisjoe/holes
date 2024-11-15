@@ -16,6 +16,7 @@ isolation_limit = 4  # Number of steps a circle can be isolated before stopping 
 paused = False
 restart_requested = False
 manual_points_list = []  # Store manually placed points
+preview_artists = []  # Store preview circle and boundary for easy removal
 
 # Add keyboard event handler
 def on_key_press(event):
@@ -33,10 +34,32 @@ def on_click(event):
     global manual_points_list
     if event.inaxes == ax and len(manual_points_list) < manual_points:
         manual_points_list.append([event.xdata, event.ydata])
-        ax.plot(event.xdata, event.ydata, 'ko', markersize=5)
+        
+        # Clear previous plot
+        ax.clear()
+        ax.set_xlim(-1, 2)
+        ax.set_ylim(-1, 2)
+        
+        # Redraw all points and their predictions
+        for i, (x, y) in enumerate(manual_points_list):
+            # Draw the actual circle (starting with radius 0)
+            circle = Circle((x, y), 0, color='red', alpha=0.3)
+            ax.add_patch(circle)
+            
+            # Draw predicted growth boundary
+            predicted_radius = isolation_limit * expansion_rate
+            predicted_circle = Circle((x, y), predicted_radius, 
+                                   linestyle='--', 
+                                   fill=False,
+                                   color='red',
+                                   alpha=0.5)
+            ax.add_patch(predicted_circle)
+            
+            # Draw center point
+            ax.plot(x, y, 'ko', markersize=5)
+        
         if len(manual_points_list) == manual_points:
             plt.title("Starting simulation...")
-            plt.draw()
         else:
             plt.title(f"Click to place point {len(manual_points_list) + 1}/{manual_points}")
         plt.draw()
@@ -51,11 +74,47 @@ def initialize_simulation():
     connections = np.ones((num_points, num_points), dtype=bool)
     return points, radii, connections
 
-# Initial setup
+# Move this function definition before the initial setup
+def on_mouse_move(event):
+    global preview_artists
+    
+    # Clear previous preview
+    for artist in preview_artists:
+        artist.remove()
+    preview_artists = []
+    
+    # Only show preview if we're still accepting points
+    if event.inaxes == ax and len(manual_points_list) < manual_points:
+        # Create preview circle (starting radius 0)
+        preview_circle = Circle((event.xdata, event.ydata), 0, 
+                              color='red', alpha=0.15)
+        ax.add_patch(preview_circle)
+        preview_artists.append(preview_circle)
+        
+        # Create preview prediction boundary
+        predicted_radius = isolation_limit * expansion_rate
+        preview_prediction = Circle((event.xdata, event.ydata), 
+                                 predicted_radius,
+                                 linestyle='--',
+                                 fill=False,
+                                 color='red',
+                                 alpha=0.25)
+        ax.add_patch(preview_prediction)
+        preview_artists.append(preview_prediction)
+        
+        # Add preview center point
+        preview_point = ax.plot(event.xdata, event.ydata, 'ko', 
+                              markersize=5, alpha=0.25)[0]
+        preview_artists.append(preview_point)
+        
+    plt.draw()
+
+# Move initial setup code after all function definitions
 fig, ax = plt.subplots(figsize=(8, 8))
 ax.set_aspect('equal')
 fig.canvas.mpl_connect('key_press_event', on_key_press)
 fig.canvas.mpl_connect('button_press_event', on_click)
+fig.canvas.mpl_connect('motion_notify_event', on_mouse_move)
 
 # Set initial plot limits
 ax.set_xlim(-1, 2)
@@ -80,7 +139,6 @@ isolation_counts = np.zeros(num_points)  # Track how long each circle has been i
 # Function to check and draw connections
 def update_connections(ax, points, radii):
     global isolation_counts
-    dists = distance_matrix(points, points)
     connected = np.zeros(num_points, dtype=bool)  # Track which points are connected this step
     
     for i in range(num_points):
@@ -96,6 +154,8 @@ def update_connections(ax, points, radii):
     # Update isolation counts
     isolation_counts[~connected] += 1  # Increment count for isolated circles
     isolation_counts[connected] = 0    # Reset count for connected circles
+    
+    return connected  # Return connected status for prediction visualization
 
 def circles_overlap(p1, p2, r1, r2):
     """Return True if two circles overlap"""
@@ -134,12 +194,28 @@ while True:  # Changed to infinite loop to allow restarts
                            [points[i][1], points[j][1]], 
                            'k-', alpha=0.5)
         
-        # Draw circles and center points
+        # Draw circles, center points, and predicted boundaries
         for i, (x, y) in enumerate(points):
             # Use different colors for active vs stopped circles
-            color = "red" if isolation_counts[i] < isolation_limit else "gray"
+            is_active = isolation_counts[i] < isolation_limit
+            color = "red" if is_active else "gray"
+            
+            # Draw the actual circle
             circle = Circle((x, y), radii[i], color=color, alpha=0.3)
             ax.add_patch(circle)
+            
+            # Draw predicted growth boundary
+            if is_active:
+                # Calculate predicted final radius
+                predicted_radius = radii[i] + (isolation_limit - isolation_counts[i]) * expansion_rate
+                predicted_circle = Circle((x, y), predicted_radius, 
+                                       linestyle='--', 
+                                       fill=False,
+                                       color=color,
+                                       alpha=0.5)
+                ax.add_patch(predicted_circle)
+            
+            # Draw center point
             ax.plot(x, y, 'ko', markersize=5)
         
         # Update connections
@@ -158,3 +234,5 @@ while True:  # Changed to infinite loop to allow restarts
         break
 
 plt.show()
+
+plt.ion()  # Turn on interactive mode
